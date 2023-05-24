@@ -16,6 +16,9 @@ import javax.xml.parsers.DocumentBuilderFactory;
 import javax.xml.parsers.ParserConfigurationException;
 import java.io.File;
 import java.io.IOException;
+import java.util.Objects;
+import static com.intellij.openapi.util.text.StringUtil.containsIgnoreCase;
+import static com.intellij.openapi.util.text.StringUtil.indexOfIgnoreCase;
 
 public class SimpleFrameTitleBuilder extends PlatformFrameTitleBuilder {
 
@@ -36,19 +39,50 @@ public class SimpleFrameTitleBuilder extends PlatformFrameTitleBuilder {
     @Override
     public String getFileTitle(@NotNull Project project, @NotNull VirtualFile virtualFile) {
         String title = state.fileFormat;
-
-        VirtualFile tempVirtualFile = virtualFile;
-        VirtualFile previousVirtualFile = virtualFile;
-
-        while(!tempVirtualFile.getName().equals(project.getName())) {
-            previousVirtualFile = tempVirtualFile;
-            tempVirtualFile = tempVirtualFile.getParent();
-        }
-
         String pomVersion = null;
+        StringBuilder rauTitle = new StringBuilder()
+                .append("*[");
 
         try {
-            String pomPath = previousVirtualFile.getPath() + "/pom.xml";
+            VirtualFile tempVirtualFile = virtualFile;
+            VirtualFile previousVirtualFile = virtualFile;
+
+            while (Objects.nonNull(tempVirtualFile) && !tempVirtualFile.getName().equals(project.getName())) {
+                previousVirtualFile = tempVirtualFile;
+                tempVirtualFile = tempVirtualFile.getParent();
+            }
+
+            pomVersion = readPomVersion(previousVirtualFile.getPath());
+
+            boolean isNotFushionProject = false;
+
+            if (Objects.nonNull(pomVersion) && !pomVersion.matches(".*\\d.*")) {
+                pomVersion = readPomVersion(project.getBasePath());
+                isNotFushionProject = true;
+            }
+
+            if (!isNotFushionProject) {
+                rauTitle.append(previousVirtualFile.getName())
+                        .append(" ^ ");
+            }
+
+            rauTitle.append(pomVersion)
+                    .append("]* - ")
+                    .append(super.getFileTitle(project, virtualFile));
+
+
+        } catch (Exception ignored) {
+
+        }
+
+        title = Objects.isNull(pomVersion) ? title.replace("{DEFAULT}", super.getFileTitle(project, virtualFile)) : title.replace("{DEFAULT}", rauTitle.toString());
+
+        return title;
+    }
+
+    private String readPomVersion(String path) {
+        try {
+            String pomPath = path + "/pom.xml";
             File file = new File(pomPath);
             DocumentBuilderFactory dbf = DocumentBuilderFactory.newInstance();
             DocumentBuilder db = dbf.newDocumentBuilder();
@@ -68,26 +102,32 @@ public class SimpleFrameTitleBuilder extends PlatformFrameTitleBuilder {
                 Node node = nodeList.item(itr);
                 if (node.getNodeType() == Node.ELEMENT_NODE) {
                     Element eElement = (Element) node;
-                    pomVersion = eElement.getElementsByTagName("version").item(0).getTextContent();
+                    return eElement.getElementsByTagName("version").item(0).getTextContent();
                 }
             }
         } catch (Exception ignored) {
 
         }
-
-        StringBuilder rauTitle = new StringBuilder()
-                .append("*[")
-                .append(previousVirtualFile.getName());
-
-        if (pomVersion != null) {
-            rauTitle.append(" ^ ")
-                    .append(pomVersion);
-        }
-        rauTitle.append("]* - ")
-                .append(super.getFileTitle(project, virtualFile));
-
-        title = title.replace("{DEFAULT}", rauTitle.toString());
-
-        return title;
+        return null;
     }
+
+    private String determineMavenVersion(VirtualFile pomFile) {
+        String mavenVersion = null;
+        try {
+            String pomAsString = new String(pomFile.contentsToByteArray());
+            if (containsIgnoreCase(pomAsString, "<parent>") && containsIgnoreCase(pomAsString, "</parent>")) {
+                pomAsString = pomAsString.substring(0, indexOfIgnoreCase(pomAsString, "<parent>", 0)) + pomAsString.substring(indexOfIgnoreCase(pomAsString, "</parent>", 0));
+            }
+            if (containsIgnoreCase(pomAsString, "<version>") && containsIgnoreCase(pomAsString, "</version>")) {
+                mavenVersion = pomAsString.substring(indexOfIgnoreCase(pomAsString, "<version>", 0) + "<version>".length(), indexOfIgnoreCase(pomAsString, "</version>", 0)).trim();
+            }
+            if ("".equals(mavenVersion)) {
+                mavenVersion = null;
+            }
+        } catch (Exception e) {
+            // ignore...
+        }
+        return mavenVersion;
+    }
+
 }
